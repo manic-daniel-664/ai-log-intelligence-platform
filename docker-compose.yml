@@ -1,0 +1,130 @@
+services:
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    depends_on:
+      - zookeeper
+    restart: unless-stopped
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    restart: unless-stopped
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: incidents
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+  
+  log-producer:
+    build:
+      context: .
+      dockerfile: services/log-producer/Dockerfile
+    container_name: log-producer
+    ports:
+      - "8000:8000"
+    depends_on:
+      - kafka
+  
+  log-parser:
+    build:
+      context: .
+      dockerfile: services/log-parser/Dockerfile
+    container_name: log-parser
+    depends_on:
+      - kafka
+      - elasticsearch
+      - redis
+
+  anomaly-detector:
+    build:
+      context: .
+      dockerfile: services/anomaly-detector/Dockerfile
+    container_name: anomaly-detector
+    depends_on:
+      - kafka
+      - redis
+
+  ai-analyzer:
+    build:
+      context: .
+      dockerfile: services/ai-analyzer/Dockerfile
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - USE_REAL_LLM=${USE_REAL_LLM}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+    depends_on:
+      - kafka
+      - postgres
+
+  insight-api:
+    build:
+      context: .
+      dockerfile: services/insight-api/Dockerfile
+    container_name: insight-api
+    ports:
+      - "8100:8000"  # externally expose only the insight API
+    depends_on:
+      - postgres
+
+volumes:
+  kafka_data:
+  postgres_data:
+  es_data:
